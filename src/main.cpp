@@ -1,64 +1,78 @@
-/*
- * Copyright (c) 2015 by Thomas Trojer <thomas@trojer.net>
- * Decawave DW1000 library for arduino.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * @file BasicConnectivityTest.ino
- * Use this to test connectivity with your DW1000 from Arduino.
- * It performs an arbitrary setup of the chip and prints some information.
- * 
- * @todo
- *  - move strings to flash (less RAM consumption)
- *  - make real check of connection (e.g. change some values on DW1000 and verify)
- */
+#include "SSD1327_GFX.h"
 
-#include <SPI.h>
-#include <DW1000.h>
+// ESP32-S3 SPI引脚定义
+#define OLED_CLK    7   // SCK
+#define OLED_MOSI   9   // MOSI  
+#define OLED_CS     6   // 片选
+#define OLED_DC     3   // 数据/命令
+#define OLED_RESET  4   // 复位
 
-// connection pins
-const uint8_t PIN_RST = 2; // reset pin
-const uint8_t PIN_IRQ = 1; // irq pin
-const uint8_t PIN_SS = 6; // spi select pin
+// 创建SSD1327显示对象
+SSD1327_GFX display(96, 96, &SPI, OLED_DC, OLED_RESET, OLED_CS, 8000000);
 
 void setup() {
-  // DEBUG monitoring
-  Serial.begin(9600);
-  // initialize the driver
-  DW1000.begin(PIN_IRQ, PIN_RST);
-  DW1000.select(PIN_SS);
-  Serial.println(F("DW1000 initialized ..."));
-  // general configuration
-  DW1000.newConfiguration();
-  DW1000.setDeviceAddress(5);
-  DW1000.setNetworkId(10);
-  DW1000.commitConfiguration();
-  Serial.println(F("Committed configuration ..."));
-  // wait a bit
-  delay(1000);
+  Serial.begin(115200);
+
+  // 初始化显示
+  if (!display.begin()) {
+    Serial.println("SSD1327初始化失败!");
+    while (1);
+  }
+
+  Serial.println("SSD1327 GFX示例启动");
+
+  // 测试Adafruit_GFX功能
+
+  // 1. 绘制文本
+  // display.setTextSize(1);
+  // display.setTextColor(MONOOLED_WHITE);
+  // display.setCursor(0, 0);
+  // display.println("Hello GFX!");
+
+  // 2. 绘制基本图形
+  // display.drawRect(0, 20, 30, 20, MONOOLED_WHITE);  // 矩形
+  // display.fillRect(35, 20, 30, 20, 8);              // 填充矩形，中等灰度
+  // display.drawCircle(50, 60, 15, MONOOLED_WHITE);   // 圆形
+  // display.fillCircle(80, 60, 10, 15);               // 填充圆形，高灰度
+
+  // 3. 绘制线条
+  // for (int i = 0; i < 16; i++) {
+  //   display.drawLine(0, 80 + i, 20 + i * 5, 80 + i, i);  // 不同灰度的线条
+  // }
+
+  // 4. 绘制渐变
+  // for (int x = 0; x < 96; x++) {
+  //   uint8_t gray = (x * 16) / 96;  // 水平渐变
+  //   display.drawFastVLine(x, 45, 15, gray);
+  // }
+
+  // 更新显示
+  display.display();
 }
 
 void loop() {
-  // DEBUG chip info and registers pretty printed
-  char msg[128];
-  DW1000.getPrintableDeviceIdentifier(msg);
-  Serial.print("Device ID: "); Serial.println(msg);
-  DW1000.getPrintableExtendedUniqueIdentifier(msg);
-  Serial.print("Unique ID: "); Serial.println(msg);
-  DW1000.getPrintableNetworkIdAndShortAddress(msg);
-  Serial.print("Network ID & Device Address: "); Serial.println(msg);
-  DW1000.getPrintableDeviceMode(msg);
-  Serial.print("Device mode: "); Serial.println(msg);
-  // wait a bit
-  delay(10000);
+  // 动态效果：移动的方块
+  static int x = 0;
+
+  display.clearDisplay();
+
+  // 绘制背景网格
+  for (int i = 0; i < 96; i += 8) {
+    display.drawFastHLine(0, i, 96, 2);
+    display.drawFastVLine(i, 0, 96, 2);
+  }
+
+  // 移动的方块
+  display.fillRect(x, 20, 16, 16, 15);
+  display.drawRect(x, 40, 16, 16, MONOOLED_WHITE);
+
+  // 文本
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.printf("Pos: %d", x);
+
+  display.display();
+
+  x = (x + 2) % 96;
+  delay(32);
 }
