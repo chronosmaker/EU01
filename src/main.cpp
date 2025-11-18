@@ -12,7 +12,9 @@ float x, y;                    // 方块左上角坐标
 float vx, vy;                  // 速度向量
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
+  Serial0.begin(9600);
+
   if (!display.begin()) {
     Serial.println("SSD1327初始化失败!");
     while (1);
@@ -57,6 +59,10 @@ void setup() {
 }
 
 void loop() {
+  if (Serial0.available()) {
+    Serial.write(Serial0.read());
+  }
+
   display.clearDisplay();
 
   // 可选：绘制背景网格（低灰度）
