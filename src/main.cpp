@@ -1,11 +1,5 @@
+#include "Common.h"
 #include "SSD1327_GFX.h"
-
-// ESP32-S3 SPI引脚定义
-#define OLED_CLK    7   // SCK
-#define OLED_MOSI   9   // MOSI  
-#define OLED_CS     6   // 片选
-#define OLED_DC     3   // 数据/命令
-#define OLED_RESET  4   // 复位
 
 // 创建SSD1327显示对象
 SSD1327_GFX display(96, 96, &SPI, OLED_DC, OLED_RESET, OLED_CS, 8000000);
