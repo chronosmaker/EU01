@@ -5,5 +5,10 @@
     "name": "chronosmaker",
     "email": "chronosmaker@126.com",
     "url": "https://github.com/chronosmaker"
-  }
+  },
+  "dependencies": {
+    "adafruit/Adafruit GFX Library": "^1.12.4"
+  },
+  "frameworks": "arduino",
+  "platforms": "*"
 }
