@@ -25,7 +25,7 @@ const int NUM_BODIES = 3;
 Body bodies[NUM_BODIES];
 const float G = 0.98f;       // 引力常数
 const float dt = 2.0f;      // 时间步长
-const float DAMPING = 0.96f; // 边界碰撞能量损失
+const float DAMPING = 0.98f; // 边界碰撞能量损失
 const float MIN_DISTANCE = 24.0f; // 球体间最小初始距离
 
 // 预计算平方和平方根值以提高性能
