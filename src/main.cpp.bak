@@ -1,0 +1,166 @@
+#include "Common.h"
+#include "SSD1327_GFX.h"
+#include <math.h>
+
+// 创建SSD1327显示对象
+SSD1327_GFX display(96, 96, &SPI, OLED_DC, OLED_RESET, OLED_CS, 8000000);
+
+// 圆球参数配置
+const int BALL_RADIUS = 4;        // 圆球半径（像素）
+const float SPEED = 3;            // 移动速度（像素/帧）
+const int NUM_BALLS = 5;          // 圆球数量（可配置）
+
+// 圆球结构体
+struct Ball {
+  float x, y;      // 圆球中心坐标
+  float vx, vy;    // 速度向量
+  uint8_t color;   // 显示灰度（0-15）
+};
+
+Ball balls[NUM_BALLS];  // 圆球数组
+
+// 检测墙壁碰撞
+void handleWallCollision(int index) {
+  Ball& ball = balls[index];
+  
+  if (ball.x - BALL_RADIUS <= 0) {           // 左边缘
+    ball.x = BALL_RADIUS;
+    ball.vx = -ball.vx;
+  } else if (ball.x + BALL_RADIUS >= 96) {  // 右边缘
+    ball.x = 96 - BALL_RADIUS;
+    ball.vx = -ball.vx;
+  }
+  
+  if (ball.y - BALL_RADIUS <= 0) {           // 上边缘
+    ball.y = BALL_RADIUS;
+    ball.vy = -ball.vy;
+  } else if (ball.y + BALL_RADIUS >= 96) {  // 下边缘
+    ball.y = 96 - BALL_RADIUS;
+    ball.vy = -ball.vy;
+  }
+}
+
+// 检测两个圆球是否碰撞
+bool checkBallCollision(int i, int j) {
+  float dx = balls[j].x - balls[i].x;
+  float dy = balls[j].y - balls[i].y;
+  float distance = sqrt(dx*dx + dy*dy);
+  
+  return distance < (2 * BALL_RADIUS);
+}
+
+// 处理圆球之间的碰撞（简化弹性碰撞）
+void handleBallCollision(int i, int j) {
+  // 计算碰撞法线向量
+  float dx = balls[j].x - balls[i].x;
+  float dy = balls[j].y - balls[i].y;
+  float distance = max((float)sqrt(dx*dx + dy*dy), 0.1f);
+  
+  // 归一化法线向量
+  dx /= distance;
+  dy /= distance;
+  
+  // 分离圆球，防止粘连
+  float overlap = (2 * BALL_RADIUS) - distance;
+  balls[i].x -= dx * overlap * 0.5f;
+  balls[i].y -= dy * overlap * 0.5f;
+  balls[j].x += dx * overlap * 0.5f;
+  balls[j].y += dy * overlap * 0.5f;
+  
+  // 简单速度交换（适用于质量相等的圆球）
+  float tempVx = balls[i].vx;
+  float tempVy = balls[i].vy;
+  
+  balls[i].vx = balls[j].vx;
+  balls[i].vy = balls[j].vy;
+  
+  balls[j].vx = tempVx;
+  balls[j].vy = tempVy;
+}
+
+void setup() {
+  Serial.begin(9600);
+  Serial0.begin(9600);
+
+  if (!display.begin()) {
+    Serial.println("SSD1327初始化失败!");
+    while (1);
+  }
+  Serial.println("多圆球碰撞示例启动");
+
+  // 初始化所有圆球
+  for (int i = 0; i < NUM_BALLS; i++) {
+    // 随机位置，避免重叠
+    bool overlapping;
+    int attempts = 0;
+    do {
+      overlapping = false;
+      balls[i].x = random(BALL_RADIUS + 5, 96 - BALL_RADIUS - 5);
+      balls[i].y = random(BALL_RADIUS + 5, 96 - BALL_RADIUS - 5);
+      
+      // 检查是否与其他圆球重叠
+      for (int j = 0; j < i; j++) {
+        if (checkBallCollision(i, j)) {
+          overlapping = true;
+          break;
+        }
+      }
+      attempts++;
+    } while (overlapping && attempts < 100);
+
+    // 随机初始方向
+    float angle = random(0, 360) * PI / 180.0;
+    balls[i].vx = SPEED * cos(angle);
+    balls[i].vy = SPEED * sin(angle);
+    
+    // 随机颜色（不同灰度）
+    balls[i].color = 8 + random(0, 8);
+  }
+}
+
+void loop() {
+  if (Serial0.available()) {
+    Serial.write(Serial0.read());
+  }
+
+  display.clearDisplay();
+
+  // 可选：绘制背景网格（低灰度）
+  for (int i = 0; i < 96; i += 16) {
+    display.drawFastHLine(0, i, 96, 1);
+    display.drawFastVLine(i, 0, 96, 1);
+  }
+
+  // 更新所有圆球位置
+  for (int i = 0; i < NUM_BALLS; i++) {
+    balls[i].x += balls[i].vx;
+    balls[i].y += balls[i].vy;
+  }
+
+  // 碰撞检测：圆球与墙壁
+  for (int i = 0; i < NUM_BALLS; i++) {
+    handleWallCollision(i);
+  }
+
+  // 碰撞检测：圆球与圆球
+  for (int i = 0; i < NUM_BALLS; i++) {
+    for (int j = i + 1; j < NUM_BALLS; j++) {
+      if (checkBallCollision(i, j)) {
+        handleBallCollision(i, j);
+      }
+    }
+  }
+
+  // 绘制所有圆球和轨迹点
+  for (int i = 0; i < NUM_BALLS; i++) {
+    display.fillCircle((int)balls[i].x, (int)balls[i].y, BALL_RADIUS, balls[i].color);
+    display.drawPixel((int)balls[i].x, (int)balls[i].y, balls[i].color - 4);
+  }
+
+  // 显示状态信息
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+
+  display.display();
+  delay(20);  // 控制帧率（约50FPS）
+}
