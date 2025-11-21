@@ -207,13 +207,7 @@ void drawStarfield() {
     // 随机闪烁效果：有概率完全熄灭模拟闪烁
     if (random(1000) < 990) { // 99%的概率显示，1%的概率熄灭
       // 根据亮度决定绘制方式
-      if (currentBrightness > 3) {
-        // 较亮的星星：绘制中心像素和周围光晕
-        display.drawPixel(stars[i].x, stars[i].y, currentBrightness);
-      } else {
-        // 较暗的星星：只绘制中心像素
-        display.drawPixel(stars[i].x, stars[i].y, currentBrightness);
-      }
+      display.drawPixel(stars[i].x, stars[i].y, currentBrightness);
     }
     // 否则不绘制（闪烁熄灭效果）
   }
