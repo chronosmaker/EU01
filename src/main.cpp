@@ -4,16 +4,28 @@
 // 创建SSD1327显示对象
 SSD1327_GFX display(96, 96, &SPI, OLED_DC, OLED_RESET, OLED_CS, 8000000);
 
-// 星空背景参数
-const int NUM_STARS = 80; // 星星数量
+// 星空背景参数 - 动态管理
+const int MAX_STARS = 100; // 最大星星数量
+const int TARGET_STARS = 80; // 目标星星数量
+int currentStarCount = 0; // 当前星星数量
+
 struct Star {
-  int x, y;           // 位置（固定）
+  int x, y;           // 位置
   uint8_t baseBrightness; // 基础亮度
   float phase;        // 相位偏移（0-2π）
   float speed;        // 闪烁速度
+  unsigned long birthTime; // 星星生成时间
+  int lifetime;       // 星星寿命（毫秒）
+  bool active;        // 星星是否活跃
 };
 
-Star stars[NUM_STARS];
+Star stars[MAX_STARS];
+
+// 星星生成和移除参数
+const unsigned long STAR_SPAWN_INTERVAL = 500; // 生成间隔（毫秒）
+const unsigned long MIN_LIFETIME = 5000;       // 最小寿命
+const unsigned long MAX_LIFETIME = 30000;      // 最大寿命
+unsigned long lastSpawnTime = 0;              // 上次生成时间
 
 // 定义球体结构
 struct Body {
@@ -23,7 +35,7 @@ struct Body {
   int radius;     // 绘制半径
   uint8_t color;  // 球体颜色（灰度值）
 
-  // 新增：轨迹跟踪相关变量
+  // 轨迹跟踪相关变量
   static const int TRAIL_LENGTH = 20; // 轨迹长度
   float trailX[TRAIL_LENGTH]; // x坐标轨迹
   float trailY[TRAIL_LENGTH]; // y坐标轨迹
@@ -173,18 +185,81 @@ void precomputeDistances() {
   }
 }
 
+// 生成新星星
+void spawnStar() {
+  if (currentStarCount >= MAX_STARS) return;
+
+  // 寻找空闲的星星槽位
+  for (int i = 0; i < MAX_STARS; i++) {
+    if (!stars[i].active) {
+      stars[i].x = random(0, 96);
+      stars[i].y = random(0, 96);
+      stars[i].baseBrightness = random(1, 5);
+      stars[i].phase = random(0, 628) / 100.0;
+      stars[i].speed = random(5, 20) / 100.0;
+      stars[i].birthTime = millis();
+      stars[i].lifetime = random(MIN_LIFETIME, MAX_LIFETIME);
+      stars[i].active = true;
+
+      currentStarCount++;
+      break;
+    }
+  }
+}
+
+// 移除过期星星
+void removeExpiredStars() {
+  unsigned long currentTime = millis();
+
+  for (int i = 0; i < MAX_STARS; i++) {
+    if (stars[i].active && (currentTime - stars[i].birthTime > stars[i].lifetime)) {
+      stars[i].active = false;
+      currentStarCount--;
+    }
+  }
+}
+
+// 动态管理星星数量
+void manageStars() {
+  unsigned long currentTime = millis();
+
+  // 移除过期星星
+  removeExpiredStars();
+
+  // 定期生成新星星
+  if (currentTime - lastSpawnTime > STAR_SPAWN_INTERVAL) {
+    // 如果星星数量不足，生成新星星
+    if (currentStarCount < TARGET_STARS) {
+      spawnStar();
+    }
+    lastSpawnTime = currentTime;
+  }
+
+  // 随机移除星星（模拟星星自然消失）
+  if (random(1000) < 2 && currentStarCount > TARGET_STARS / 2) { // 0.2%的概率每帧移除一颗星星
+    for (int i = 0; i < MAX_STARS; i++) {
+      if (stars[i].active) {
+        stars[i].active = false;
+        currentStarCount--;
+        break;
+      }
+    }
+  }
+}
+
 // 初始化星空背景
 void initializeStars() {
-  randomSeed(analogRead(0)); // 使用随机种子
+  randomSeed(analogRead(0));
+  currentStarCount = 0;
 
-  for (int i = 0; i < NUM_STARS; i++) {
-    // 随机位置
-    stars[i].x = random(0, 96);
-    stars[i].y = random(0, 96);
-    // 设置星星参数
-    stars[i].baseBrightness = random(1, 5); // 基础亮度1-4
-    stars[i].phase = random(0, 628) / 100.0; // 0-2π的随机相位
-    stars[i].speed = random(5, 20) / 100.0; // 闪烁速度
+  // 初始化所有星星为未激活状态
+  for (int i = 0; i < MAX_STARS; i++) {
+    stars[i].active = false;
+  }
+
+  // 生成初始星星
+  for (int i = 0; i < TARGET_STARS; i++) {
+    spawnStar();
   }
 }
 
@@ -192,24 +267,36 @@ void initializeStars() {
 void drawStarfield() {
   unsigned long currentTime = millis();
 
-  for (int i = 0; i < NUM_STARS; i++) {
-    // 使用正弦波创建呼吸效果，叠加时间因子
+  for (int i = 0; i < MAX_STARS; i++) {
+    if (!stars[i].active) continue;
+
+    // 计算星星年龄比例（用于淡入淡出效果）
+    float ageRatio = (float)(currentTime - stars[i].birthTime) / stars[i].lifetime;
+
+    // 生命周期亮度调整：淡入和淡出
+    float lifeBrightness = 1.0;
+    if (ageRatio < 0.1) {
+      // 淡入阶段（前10%生命周期）
+      lifeBrightness = ageRatio / 0.1;
+    } else if (ageRatio > 0.9) {
+      // 淡出阶段（最后10%生命周期）
+      lifeBrightness = (1.0 - ageRatio) / 0.1;
+    }
+
+    // 呼吸效果
     float timeFactor = currentTime * 0.001 * stars[i].speed + stars[i].phase;
     float brightnessVariation = sin(timeFactor);
-
-    // 计算当前亮度：基础亮度 + 变化量
     uint8_t currentBrightness = stars[i].baseBrightness +
       (uint8_t)(brightnessVariation * stars[i].baseBrightness * 0.7);
 
-    // 确保亮度在有效范围内
+    // 应用生命周期亮度调整
+    currentBrightness = (uint8_t)(currentBrightness * lifeBrightness);
     currentBrightness = constrain(currentBrightness, 1, 15);
 
-    // 随机闪烁效果：有概率完全熄灭模拟闪烁
-    if (random(1000) < 990) { // 99%的概率显示，1%的概率熄灭
-      // 根据亮度决定绘制方式
+    // 随机闪烁效果
+    if (random(1000) < 995) { // 99.5%的概率显示
       display.drawPixel(stars[i].x, stars[i].y, currentBrightness);
     }
-    // 否则不绘制（闪烁熄灭效果）
   }
 }
 
@@ -306,7 +393,10 @@ void loop() {
   unsigned long startTime = micros();
   display.clearDisplay();
 
-  // 先绘制星空背景
+  // 管理星星生命周期（生成和移除）
+  manageStars();
+
+  // 绘制星空背景
   drawStarfield();
 
   // 预计算距离数据
