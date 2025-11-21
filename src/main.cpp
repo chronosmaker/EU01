@@ -4,6 +4,17 @@
 // 创建SSD1327显示对象
 SSD1327_GFX display(96, 96, &SPI, OLED_DC, OLED_RESET, OLED_CS, 8000000);
 
+// 星空背景参数
+const int NUM_STARS = 80; // 星星数量
+struct Star {
+  int x, y;           // 位置（固定）
+  uint8_t baseBrightness; // 基础亮度
+  float phase;        // 相位偏移（0-2π）
+  float speed;        // 闪烁速度
+};
+
+Star stars[NUM_STARS];
+
 // 定义球体结构
 struct Body {
   float x, y;     // 位置
@@ -162,6 +173,52 @@ void precomputeDistances() {
   }
 }
 
+// 初始化星空背景
+void initializeStars() {
+  randomSeed(analogRead(0)); // 使用随机种子
+
+  for (int i = 0; i < NUM_STARS; i++) {
+    // 随机位置
+    stars[i].x = random(0, 96);
+    stars[i].y = random(0, 96);
+    // 设置星星参数
+    stars[i].baseBrightness = random(1, 5); // 基础亮度1-4
+    stars[i].phase = random(0, 628) / 100.0; // 0-2π的随机相位
+    stars[i].speed = random(5, 20) / 100.0; // 闪烁速度
+  }
+}
+
+// 绘制星空背景
+void drawStarfield() {
+  unsigned long currentTime = millis();
+
+  for (int i = 0; i < NUM_STARS; i++) {
+    // 使用正弦波创建呼吸效果，叠加时间因子
+    float timeFactor = currentTime * 0.001 * stars[i].speed + stars[i].phase;
+    float brightnessVariation = sin(timeFactor);
+
+    // 计算当前亮度：基础亮度 + 变化量
+    uint8_t currentBrightness = stars[i].baseBrightness +
+      (uint8_t)(brightnessVariation * stars[i].baseBrightness * 0.7);
+
+    // 确保亮度在有效范围内
+    currentBrightness = constrain(currentBrightness, 1, 15);
+
+    // 随机闪烁效果：有概率完全熄灭模拟闪烁
+    if (random(1000) < 990) { // 99%的概率显示，1%的概率熄灭
+      // 根据亮度决定绘制方式
+      if (currentBrightness > 3) {
+        // 较亮的星星：绘制中心像素和周围光晕
+        display.drawPixel(stars[i].x, stars[i].y, currentBrightness);
+      } else {
+        // 较暗的星星：只绘制中心像素
+        display.drawPixel(stars[i].x, stars[i].y, currentBrightness);
+      }
+    }
+    // 否则不绘制（闪烁熄灭效果）
+  }
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -244,6 +301,9 @@ void setup() {
     initializeTrail(i);
   }
 
+  // 初始化星空背景
+  initializeStars();
+
   Serial.print("初始化尝试次数: ");
   Serial.println(attempts);
 }
@@ -251,6 +311,9 @@ void setup() {
 void loop() {
   unsigned long startTime = micros();
   display.clearDisplay();
+
+  // 先绘制星空背景
+  drawStarfield();
 
   // 预计算距离数据
   precomputeDistances();
