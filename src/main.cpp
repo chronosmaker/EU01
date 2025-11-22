@@ -37,7 +37,7 @@ uint16_t starTimer = 0;
 // ============================ 三体系统配置 ============================
 const int NUM_BODIES = 3;
 const float G = 1.2f;               // 引力常数
-const float dt = 1.0f;              // 时间步长
+const float dt = 1.1f;              // 时间步长
 const float DAMPING = 0.96f;        // 边界碰撞能量损失
 const float MIN_DISTANCE = 20.0f;   // 最小初始距离
 
@@ -249,7 +249,7 @@ void spawnStar() {
       stars[i].x = random(0, 96);
       stars[i].y = random(0, 96);
       stars[i].baseBrightness = random(1, 5); // 基础亮度
-      stars[i].speed = random(8, 24);
+      stars[i].speed = random(5, 15);
       stars[i].birthTime = starTimer;
       stars[i].lifetime = random(MIN_LIFETIME / 100, MAX_LIFETIME / 100);
       stars[i].phase = random(0, 628) / 100.0f;
