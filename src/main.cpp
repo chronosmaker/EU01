@@ -38,7 +38,7 @@ uint16_t starTimer = 0;
 const int NUM_BODIES = 3;
 const float G = 1.2f;               // 引力常数
 const float dt = 1.1f;              // 时间步长
-const float DAMPING = 0.96f;        // 边界碰撞能量损失
+const float DAMPING = 0.98f;        // 边界碰撞能量损失
 const float MIN_DISTANCE = 20.0f;   // 最小初始距离
 
 // 优化的球体结构体
