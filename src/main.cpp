@@ -1,204 +1,258 @@
 #include "Common.h"
 #include "SSD1327_GFX.h"
 
+#define DEBUG_PERF
+
+// ============================ 显示配置 ============================
 // 创建SSD1327显示对象
 SSD1327_GFX display(96, 96, &SPI, OLED_DC, OLED_RESET, OLED_CS, 8000000);
 
-// 星空背景参数 - 动态管理
-const int MAX_STARS = 100; // 最大星星数量
-const int TARGET_STARS = 80; // 目标星星数量
-int currentStarCount = 0; // 当前星星数量
+// ============================ 性能配置 ============================
+const int TARGET_FPS = 30;
+const unsigned long TARGET_FRAME_TIME = 1000000 / TARGET_FPS;
 
+// ============================ 星空背景配置 ============================
+const int MAX_STARS = 80;           // 最大星星数量
+const int TARGET_STARS = 60;        // 目标星星数量
+const unsigned long STAR_SPAWN_INTERVAL = 200;  // 生成间隔
+const unsigned long MIN_LIFETIME = 10000;       // 最小寿命
+const unsigned long MAX_LIFETIME = 30000;       // 最大寿命
+
+// 星星结构体
 struct Star {
-  int x, y;           // 位置
+  int16_t x, y;           // 位置坐标
   uint8_t baseBrightness; // 基础亮度
-  float phase;        // 相位偏移（0-2π）
-  float speed;        // 闪烁速度
-  unsigned long birthTime; // 星星生成时间
-  int lifetime;       // 星星寿命（毫秒）
-  bool active;        // 星星是否活跃
+  uint8_t speed;          // 闪烁速度
+  uint16_t birthTime;     // 生成时间
+  uint16_t lifetime;      // 寿命
+  bool active;            // 活跃状态
+  float phase;            // 相位偏移（0-2π）
 };
 
+// 星空相关变量
 Star stars[MAX_STARS];
+int currentStarCount = 0;
+uint16_t starTimer = 0;
 
-// 星星生成和移除参数
-const unsigned long STAR_SPAWN_INTERVAL = 500; // 生成间隔（毫秒）
-const unsigned long MIN_LIFETIME = 5000;       // 最小寿命
-const unsigned long MAX_LIFETIME = 30000;      // 最大寿命
-unsigned long lastSpawnTime = 0;              // 上次生成时间
+// ============================ 三体系统配置 ============================
+const int NUM_BODIES = 3;
+const float G = 1.2f;               // 引力常数
+const float dt = 1.0f;              // 时间步长
+const float DAMPING = 0.96f;        // 边界碰撞能量损失
+const float MIN_DISTANCE = 20.0f;   // 最小初始距离
 
-// 定义球体结构
+// 优化的球体结构体
 struct Body {
-  float x, y;     // 位置
-  float vx, vy;   // 速度
-  float mass;     // 质量
-  int radius;     // 绘制半径
-  uint8_t color;  // 球体颜色（灰度值）
+  float x, y;       // 位置坐标
+  float vx, vy;     // 速度分量
+  float mass;       // 质量
+  int8_t radius;    // 绘制半径
+  uint8_t color;    // 球体颜色（灰度值）
 
-  // 轨迹跟踪相关变量
-  static const int TRAIL_LENGTH = 20; // 轨迹长度
-  float trailX[TRAIL_LENGTH]; // x坐标轨迹
-  float trailY[TRAIL_LENGTH]; // y坐标轨迹
-  int trailIndex; // 当前轨迹索引
-  uint8_t trailColor; // 轨迹颜色（比球体颜色暗）
+  // 轨迹跟踪
+  static const int TRAIL_LENGTH = 25; // 轨迹长度
+  int8_t trailX[TRAIL_LENGTH];        // x坐标轨迹
+  int8_t trailY[TRAIL_LENGTH];        // y坐标轨迹
+  uint8_t trailIndex;                 // 当前轨迹索引
+  uint8_t trailColor;                 // 轨迹颜色
+  float trailIntensity;               // 轨迹强度
 };
 
-// 三体系统参数
-const int NUM_BODIES = 3;
+// 三体系统变量
 Body bodies[NUM_BODIES];
-const float G = 0.98f;       // 引力常数
-const float dt = 1.96f;      // 时间步长
-const float DAMPING = 0.98f; // 边界碰撞能量损失
-const float MIN_DISTANCE = 24.0f; // 球体间最小初始距离
+float distanceCache[NUM_BODIES][NUM_BODIES];  // 距离缓存
 
-// 预计算平方和平方根值以提高性能
-float precomputedDistances[NUM_BODIES][NUM_BODIES];
+// ============================ 数学优化函数 ============================
 
-// 初始化轨迹数据
-void initializeTrail(int bodyIndex) {
-  for (int i = 0; i < Body::TRAIL_LENGTH; i++) {
-    bodies[bodyIndex].trailX[i] = bodies[bodyIndex].x;
-    bodies[bodyIndex].trailY[i] = bodies[bodyIndex].y;
-  }
-  bodies[bodyIndex].trailIndex = 0;
-  // 轨迹颜色比球体颜色暗（约为球体颜色的1/2），并设置最小亮度为4
-  bodies[bodyIndex].trailColor = max(4, bodies[bodyIndex].color / 2);
+/**
+ * @brief 快速平方根近似计算
+ */
+inline float fastSqrt(float x) {
+  union {
+    float f;
+    int32_t i;
+  } conv;
+
+  conv.f = x;
+  conv.i = 0x5f3759df - (conv.i >> 1);
+  return x * conv.f * (1.5f - 0.5f * x * conv.f * conv.f);
 }
 
-void drawTrail(int bodyIndex) {
-  // 从最新的轨迹点开始绘制（当前索引的前一个位置）
+/**
+ * @brief 快速距离计算（避免开方）
+ */
+inline float fastDistanceSq(float dx, float dy) {
+  return dx * dx + dy * dy;
+}
+
+// ============================ 轨迹管理函数 ============================
+
+/**
+ * @brief 初始化球体轨迹数据
+ * @param bodyIndex 球体索引
+ */
+void initializeTrail(int bodyIndex) {
   for (int i = 0; i < Body::TRAIL_LENGTH; i++) {
-    // 计算轨迹点位置：从新到旧（i=0是最新，i=TRAIL_LENGTH-1是最旧）
+    bodies[bodyIndex].trailX[i] = (int8_t)bodies[bodyIndex].x;
+    bodies[bodyIndex].trailY[i] = (int8_t)bodies[bodyIndex].y;
+  }
+  bodies[bodyIndex].trailIndex = 0;
+  bodies[bodyIndex].trailColor = max(4, bodies[bodyIndex].color / 2);
+  bodies[bodyIndex].trailIntensity = 1.0f;
+}
+
+/**
+ * @brief 更新球体轨迹数据
+ * @param bodyIndex 球体索引
+ */
+void updateTrail(int bodyIndex) {
+  bodies[bodyIndex].trailIndex = (bodies[bodyIndex].trailIndex + 1) % Body::TRAIL_LENGTH;
+  bodies[bodyIndex].trailX[bodies[bodyIndex].trailIndex] = (int8_t)bodies[bodyIndex].x;
+  bodies[bodyIndex].trailY[bodies[bodyIndex].trailIndex] = (int8_t)bodies[bodyIndex].y;
+
+  // 基于速度计算轨迹强度
+  float speed = fastSqrt(bodies[bodyIndex].vx * bodies[bodyIndex].vx +
+    bodies[bodyIndex].vy * bodies[bodyIndex].vy);
+  bodies[bodyIndex].trailIntensity = min(1.5f, speed * 3.0f);
+}
+
+/**
+ * @brief 绘制球体轨迹
+ * @param bodyIndex 球体索引
+ */
+void drawTrail(int bodyIndex) {
+  uint8_t baseColor = bodies[bodyIndex].trailColor;
+  float intensity = bodies[bodyIndex].trailIntensity;
+
+  for (int i = 0; i < Body::TRAIL_LENGTH; i++) {
+    // 计算轨迹点位置（从新到旧）
     int trailPos = (bodies[bodyIndex].trailIndex - i + Body::TRAIL_LENGTH) % Body::TRAIL_LENGTH;
 
-    // 跳过未初始化的轨迹点
-    if (bodies[bodyIndex].trailX[trailPos] == 0 &&
-      bodies[bodyIndex].trailY[trailPos] == 0) {
-      continue;
-    }
+    int x = bodies[bodyIndex].trailX[trailPos];
+    int y = bodies[bodyIndex].trailY[trailPos];
 
-    // 计算轨迹点的灰度值（越旧的轨迹越暗）
+    // 边界检查
+    if (x < 0 || x >= 96 || y < 0 || y >= 96) continue;
+
+    // 计算轨迹点亮度（年龄衰减）
     float ageRatio = (float)i / Body::TRAIL_LENGTH;
-    // 使用指数衰减：年龄比例的平方，让衰减更陡峭
     float attenuation = ageRatio * ageRatio;
-    uint8_t pointBrightness = bodies[bodyIndex].trailColor * (1.0 - attenuation);
+    uint8_t brightness = (uint8_t)(baseColor * intensity * (1.0f - attenuation));
 
-    // 设置最小亮度阈值
-    pointBrightness = max(uint8_t(1), pointBrightness);
+    if (brightness < 2) continue;
 
-    int x = (int)bodies[bodyIndex].trailX[trailPos];
-    int y = (int)bodies[bodyIndex].trailY[trailPos];
-
-    if (x >= 0 && x < 96 && y >= 0 && y < 96) {
-      // 根据轨迹年龄采用不同的绘制策略
-      if (i == 0) {
-        // 最新的点：不绘制（与球体重合）
-        continue;
-      } else if (i <= 3) {
-        // 较新的轨迹：绘制明亮的小点
-        display.drawPixel(x, y, pointBrightness);
-        // 添加周围像素增强可见性
-        if (pointBrightness > 6) {
-          display.drawPixel(x + 1, y, pointBrightness / 2);
-          display.drawPixel(x - 1, y, pointBrightness / 2);
-        }
-      } else if (i <= 8) {
-        // 中等年龄的轨迹：绘制单像素点
-        display.drawPixel(x, y, pointBrightness);
-      } else if (i <= 15) {
-        // 较旧的轨迹：降低亮度绘制
-        if (pointBrightness > 2) {
-          display.drawPixel(x, y, pointBrightness / 2);
-        }
-      } else {
-        // 最旧的轨迹：间隔绘制以节省资源
-        if (i % 2 == 0 && pointBrightness > 1) {
-          display.drawPixel(x, y, 1);
-        }
+    // 根据轨迹年龄采用不同绘制策略
+    if (i < 4) {
+      // 新轨迹：明亮显示
+      display.drawPixel(x, y, min((uint8_t)15, brightness));
+      if (brightness > 8) {
+        display.drawPixel(x + 1, y, brightness / 3);
+        display.drawPixel(x - 1, y, brightness / 3);
+      }
+    } else if (i < 10) {
+      // 中等轨迹
+      display.drawPixel(x, y, brightness / 2);
+    } else {
+      // 旧轨迹：间隔绘制
+      if (i % 2 == 0 && brightness > 3) {
+        display.drawPixel(x, y, brightness / 4);
       }
     }
   }
 }
 
-// 轨迹更新逻辑，确保轨迹颜色动态调整
-void updateTrail(int bodyIndex) {
-  bodies[bodyIndex].trailIndex = (bodies[bodyIndex].trailIndex + 1) % Body::TRAIL_LENGTH;
-  bodies[bodyIndex].trailX[bodies[bodyIndex].trailIndex] = bodies[bodyIndex].x;
-  bodies[bodyIndex].trailY[bodies[bodyIndex].trailIndex] = bodies[bodyIndex].y;
+// ============================ 球体绘制 ============================
 
-  // 根据速度动态调整轨迹基准亮度，让快速运动的物体轨迹更明显
-  float speed = sqrt(bodies[bodyIndex].vx * bodies[bodyIndex].vx +
-    bodies[bodyIndex].vy * bodies[bodyIndex].vy);
-  uint8_t speedBrightness = min(uint8_t(15), uint8_t(speed * 8 + 4));
-  bodies[bodyIndex].trailColor = max(uint8_t(bodies[bodyIndex].color / 2), speedBrightness);
-}
-
-// 绘制渐变球形函数
-void drawGradientBall(int x, int y, int radius, uint8_t baseColor) {
-  // 边界检查，避免绘制屏幕外内容
-  if (x + radius < 0 || x - radius > 95 || y + radius < 0 || y - radius > 95) {
+/**
+ * @brief 绘制球形
+ * @param x 中心x坐标
+ * @param y 中心y坐标
+ * @param radius 半径
+ * @param baseColor 基础颜色
+ */
+void drawBall(int x, int y, int radius, uint8_t baseColor) {
+  // 快速边界检查
+  if (x < -radius || x > 96 + radius || y < -radius || y > 96 + radius) {
     return;
   }
 
-  // 根据半径大小选择绘制细节
-  if (radius <= 3) {
-    // 小半径直接绘制实心圆
+  // 根据半径选择绘制策略
+  if (radius <= 2) {
+    // 小半径直接绘制
     display.fillCircle(x, y, radius, baseColor);
+  } else if (radius <= 4) {
+    // 中等半径：简单渐变
+    display.drawCircle(x, y, radius, max(3, baseColor / 2));
+    display.fillCircle(x, y, radius - 1, baseColor);
   } else {
-    // 大半径绘制渐变效果
+    // 大半径：多层渐变
     for (int r = radius; r >= 0; r--) {
-      uint8_t gray = map(r, 0, radius, baseColor, max(5, baseColor - 8));
+      uint8_t gray = map(r, 0, radius, baseColor, max(3, baseColor - r));
       display.drawCircle(x, y, r, gray);
+      if (r <= radius / 2) break; // 内层使用相同颜色
     }
-    // 填充中心区域
     display.fillCircle(x, y, radius / 2, baseColor);
   }
 }
 
-// 检查位置是否有效（与其他球体保持足够距离）
+// ============================ 物理系统函数 ============================
+
+/**
+ * @brief 检查位置有效性（避免球体重叠）
+ * @param x 待检查x坐标
+ * @param y 待检查y坐标
+ * @param radius 球体半径
+ * @param excludeIndex 排除的球体索引
+ * @return true=位置有效, false=位置无效
+ */
 bool isValidPosition(float x, float y, int radius, int excludeIndex = -1) {
   for (int i = 0; i < NUM_BODIES; i++) {
-    if (i == excludeIndex) continue;
-    if (bodies[i].radius == 0) continue; // 未初始化的球体
+    if (i == excludeIndex || bodies[i].radius == 0) continue;
 
     float dx = x - bodies[i].x;
     float dy = y - bodies[i].y;
-    float distance = sqrt(dx * dx + dy * dy);
-    float minAcceptable = radius + bodies[i].radius + 16; // 保持额外间距
+    float distanceSq = dx * dx + dy * dy;
+    float minDistance = radius + bodies[i].radius + 12.0f; // 保持额外间距
 
-    if (distance < minAcceptable) {
+    if (distanceSq < minDistance * minDistance) {
       return false;
     }
   }
   return true;
 }
 
-// 预计算距离相关数据
+/**
+ * @brief 预计算球体间距离数据
+ */
 void precomputeDistances() {
+  // 使用快速距离计算
   for (int i = 0; i < NUM_BODIES; i++) {
     for (int j = i + 1; j < NUM_BODIES; j++) {
       float dx = bodies[j].x - bodies[i].x;
       float dy = bodies[j].y - bodies[i].y;
-      precomputedDistances[i][j] = dx * dx + dy * dy; // 存储平方距离
-      precomputedDistances[j][i] = precomputedDistances[i][j];
+      distanceCache[i][j] = dx * dx + dy * dy; // 存储平方距离
+      distanceCache[j][i] = distanceCache[i][j];
     }
   }
 }
 
-// 生成新星星
+// ============================ 星空背景函数 ============================
+
+/**
+ * @brief 生成新星星
+ */
 void spawnStar() {
   if (currentStarCount >= MAX_STARS) return;
 
-  // 寻找空闲的星星槽位
   for (int i = 0; i < MAX_STARS; i++) {
     if (!stars[i].active) {
       stars[i].x = random(0, 96);
       stars[i].y = random(0, 96);
-      stars[i].baseBrightness = random(1, 5);
-      stars[i].phase = random(0, 628) / 100.0;
-      stars[i].speed = random(5, 20) / 100.0;
-      stars[i].birthTime = millis();
-      stars[i].lifetime = random(MIN_LIFETIME, MAX_LIFETIME);
+      stars[i].baseBrightness = random(1, 5); // 基础亮度
+      stars[i].speed = random(8, 24);
+      stars[i].birthTime = starTimer;
+      stars[i].lifetime = random(MIN_LIFETIME / 100, MAX_LIFETIME / 100);
+      stars[i].phase = random(0, 628) / 100.0f;
       stars[i].active = true;
 
       currentStarCount++;
@@ -207,36 +261,39 @@ void spawnStar() {
   }
 }
 
-// 移除过期星星
+/**
+ * @brief 移除过期星星
+ */
 void removeExpiredStars() {
-  unsigned long currentTime = millis();
-
   for (int i = 0; i < MAX_STARS; i++) {
-    if (stars[i].active && (currentTime - stars[i].birthTime > stars[i].lifetime)) {
-      stars[i].active = false;
-      currentStarCount--;
+    if (stars[i].active) {
+      uint16_t age = starTimer - stars[i].birthTime;
+      if (age > stars[i].lifetime) {
+        stars[i].active = false;
+        currentStarCount--;
+      }
     }
   }
 }
 
-// 动态管理星星数量
+/**
+ * @brief 动态管理星星生命周期
+ */
 void manageStars() {
-  unsigned long currentTime = millis();
+  starTimer++;
 
   // 移除过期星星
   removeExpiredStars();
 
-  // 定期生成新星星
-  if (currentTime - lastSpawnTime > STAR_SPAWN_INTERVAL) {
-    // 如果星星数量不足，生成新星星
+  // 动态生成星星
+  if (starTimer % (STAR_SPAWN_INTERVAL / TARGET_FPS) == 0) {
     if (currentStarCount < TARGET_STARS) {
       spawnStar();
     }
-    lastSpawnTime = currentTime;
   }
 
-  // 随机移除星星（模拟星星自然消失）
-  if (random(1000) < 2 && currentStarCount > TARGET_STARS / 2) { // 0.2%的概率每帧移除一颗星星
+  // 随机消失
+  if (random(1000) == 0 && currentStarCount > TARGET_STARS / 2) {
     for (int i = 0; i < MAX_STARS; i++) {
       if (stars[i].active) {
         stars[i].active = false;
@@ -247,104 +304,127 @@ void manageStars() {
   }
 }
 
-// 初始化星空背景
+/**
+ * @brief 初始化星空背景
+ */
 void initializeStars() {
-  randomSeed(analogRead(0));
   currentStarCount = 0;
+  starTimer = 0;
 
   // 初始化所有星星为未激活状态
   for (int i = 0; i < MAX_STARS; i++) {
     stars[i].active = false;
   }
 
-  // 生成初始星星
-  for (int i = 0; i < TARGET_STARS; i++) {
+  // 预生成星星
+  for (int i = 0; i < TARGET_STARS / 2; i++) {
     spawnStar();
   }
 }
 
-// 绘制星空背景
+/**
+ * @brief 绘制星空背景
+ */
 void drawStarfield() {
-  unsigned long currentTime = millis();
-
   for (int i = 0; i < MAX_STARS; i++) {
     if (!stars[i].active) continue;
 
-    // 计算星星年龄比例（用于淡入淡出效果）
-    float ageRatio = (float)(currentTime - stars[i].birthTime) / stars[i].lifetime;
+    // 计算生命周期亮度调整
+    uint16_t age = starTimer - stars[i].birthTime;
+    float ageRatio = (float)age / stars[i].lifetime;
+    float lifeBrightness = 1.0f;
 
-    // 生命周期亮度调整：淡入和淡出
-    float lifeBrightness = 1.0;
-    if (ageRatio < 0.1) {
-      // 淡入阶段（前10%生命周期）
-      lifeBrightness = ageRatio / 0.1;
-    } else if (ageRatio > 0.9) {
-      // 淡出阶段（最后10%生命周期）
-      lifeBrightness = (1.0 - ageRatio) / 0.1;
+    // 生命周期亮度调整
+    if (ageRatio < 0.2f) {
+      // 淡入阶段（前20%生命周期）
+      lifeBrightness = ageRatio / 0.2f;
+    } else if (ageRatio > 0.8f) {
+      // 淡出阶段（最后20%生命周期）
+      lifeBrightness = (1.0f - ageRatio) / 0.2f;
     }
 
     // 呼吸效果
-    float timeFactor = currentTime * 0.001 * stars[i].speed + stars[i].phase;
-    float brightnessVariation = sin(timeFactor);
+    float timeFactor = starTimer * 0.05f * (stars[i].speed * 0.01f) + stars[i].phase;
+    float brightnessVariation = (sin(timeFactor) + sin(timeFactor * 1.7f)) * 0.5f;
     uint8_t currentBrightness = stars[i].baseBrightness +
-      (uint8_t)(brightnessVariation * stars[i].baseBrightness * 0.7);
+      (uint8_t)(brightnessVariation * stars[i].baseBrightness * 0.6f);
 
     // 应用生命周期亮度调整
     currentBrightness = (uint8_t)(currentBrightness * lifeBrightness);
     currentBrightness = constrain(currentBrightness, 1, 15);
 
-    // 随机闪烁效果
-    if (random(1000) < 995) { // 99.5%的概率显示
+    // 绘制星星（99%显示概率）
+    if (random(100) < 99) {
       display.drawPixel(stars[i].x, stars[i].y, currentBrightness);
     }
   }
 }
 
+// ============================ 性能监控 ============================
+#ifdef DEBUG_PERF
+unsigned long frameCount = 0;
+unsigned long lastFPSUpdate = 0;
+float currentFPS = 0;
+#endif
+
+// ============================ 主程序函数 ============================
+
 void setup() {
   Serial.begin(115200);
+  delay(100); // 等待串口稳定
+
+  Serial.println("三体运动模拟启动");
 
   // 初始化显示
   if (!display.begin()) {
     Serial.println("SSD1327初始化失败!");
-    while (1);
+    while (1) {
+      delay(1000);
+    }
   }
-  Serial.println("三体运动模拟启动");
 
-  // 初始化三个球体
-  randomSeed(analogRead(0));
+  // 设置显示参数
+  display.setRotation(0);
+  display.setTextColor(MONOOLED_WHITE);
+  display.setTextSize(1);
 
-  // 球体1：中等大小 - 放置在左下区域
+  Serial.println("显示初始化成功");
+
+  // 初始化随机数生成器
+  randomSeed(esp_random());
+
+  // 配置三体系统
+  // 球体1：中等大小
   bodies[0].radius = 4;
-  bodies[0].mass = bodies[0].radius * bodies[0].radius * 0.6f;
-  bodies[0].color = 12;
+  bodies[0].mass = bodies[0].radius * bodies[0].radius * 0.8f;
+  bodies[0].color = 10;
 
-  // 球体2：较小 - 放置在右上区域  
+  // 球体2：较小
   bodies[1].radius = 3;
-  bodies[1].mass = bodies[1].radius * bodies[1].radius * 0.6f;
+  bodies[1].mass = bodies[1].radius * bodies[1].radius * 0.8f;
   bodies[1].color = 10;
 
-  // 球体3：较大 - 放置在左上区域
+  // 球体3：较大
   bodies[2].radius = 5;
-  bodies[2].mass = bodies[2].radius * bodies[2].radius * 0.6f;
-  bodies[2].color = 14;
+  bodies[2].mass = bodies[2].radius * bodies[2].radius * 0.8f;
+  bodies[2].color = 10;
 
-  // 设置初始位置，确保彼此远离
+  // 初始位置设置
   bool positionsValid = false;
   int attempts = 0;
+  const int maxAttempts = 50;
 
-  while (!positionsValid && attempts < 100) {
+  while (!positionsValid && attempts < maxAttempts) {
     attempts++;
 
-    // 尝试放置球体1（左下区域）
-    bodies[0].x = random(20, 40);
+    // 使用三角形布局
+    bodies[0].x = random(20, 40);  // 左下
     bodies[0].y = random(60, 80);
 
-    // 尝试放置球体2（右上区域）
-    bodies[1].x = random(60, 80);
+    bodies[1].x = random(60, 80);  // 右上
     bodies[1].y = random(20, 40);
 
-    // 尝试放置球体3（左上区域）
-    bodies[2].x = random(20, 40);
+    bodies[2].x = random(20, 40);  // 左上
     bodies[2].y = random(20, 40);
 
     // 检查所有位置是否有效
@@ -357,71 +437,75 @@ void setup() {
     }
   }
 
+  // 如果随机放置失败，使用预设位置
   if (!positionsValid) {
-    // 如果随机放置失败，使用预设的分散位置
-    bodies[0].x = 30; bodies[0].y = 70; // 左下
-    bodies[1].x = 70; bodies[1].y = 30; // 右上  
-    bodies[2].x = 30; bodies[2].y = 30; // 左上
+    bodies[0].x = 25; bodies[0].y = 70;
+    bodies[1].x = 75; bodies[1].y = 25;
+    bodies[2].x = 25; bodies[2].y = 25;
   }
 
-  // 设置初始速度 - 让它们有向外运动的趋势
+  // 设置初始速度（形成混沌系统）
   // 球体1：向右上运动
-  bodies[0].vx = random(3, 6) * 0.1f;
-  bodies[0].vy = random(-6, -3) * 0.1f;
+  bodies[0].vx = random(4, 8) * 0.1f;
+  bodies[0].vy = random(-8, -4) * 0.1f;
 
   // 球体2：向左下运动
-  bodies[1].vx = random(-6, -3) * 0.1f;
-  bodies[1].vy = random(3, 6) * 0.1f;
+  bodies[1].vx = random(-8, -4) * 0.1f;
+  bodies[1].vy = random(4, 8) * 0.1f;
 
   // 球体3：向右下运动
-  bodies[2].vx = random(3, 6) * 0.1f;
-  bodies[2].vy = random(3, 6) * 0.1f;
+  bodies[2].vx = random(4, 8) * 0.1f;
+  bodies[2].vy = random(4, 8) * 0.1f;
 
-  // 初始化轨迹数据
+  // 初始化轨迹
   for (int i = 0; i < NUM_BODIES; i++) {
     initializeTrail(i);
   }
 
-  // 初始化星空背景
+  // 初始化星空
   initializeStars();
 
-  Serial.print("初始化尝试次数: ");
+  Serial.print("系统初始化完成，尝试次数: ");
   Serial.println(attempts);
+  Serial.println("开始模拟...");
 }
 
 void loop() {
-  unsigned long startTime = micros();
+  unsigned long frameStart = micros();
+
+  // 清屏
   display.clearDisplay();
 
-  // 管理星星生命周期（生成和移除）
+  // 1. 管理星空背景
   manageStars();
-
-  // 绘制星空背景
   drawStarfield();
 
-  // 预计算距离数据
+  // 2. 预计算距离
   precomputeDistances();
 
-  // 1. 计算引力并更新运动状态
+  // 3. 计算物理运动
   for (int i = 0; i < NUM_BODIES; i++) {
-    float fx = 0, fy = 0;
+    float fx = 0.0f, fy = 0.0f;
 
     for (int j = 0; j < NUM_BODIES; j++) {
       if (i == j) continue;
 
-      float distanceSq = precomputedDistances[i][j];
-      float minDistance = bodies[i].radius + bodies[j].radius + 8.0f; // 增加最小距离
+      float distanceSq = distanceCache[i][j];
+      float minDistance = bodies[i].radius + bodies[j].radius + 6.0f;
       float minDistanceSq = minDistance * minDistance;
 
       // 防止距离过小导致计算不稳定
       distanceSq = max(distanceSq, minDistanceSq);
 
-      float distance = sqrt(distanceSq);
-      float dx = (bodies[j].x - bodies[i].x) / distance;
-      float dy = (bodies[j].y - bodies[i].y) / distance;
+      float dx = (bodies[j].x - bodies[i].x);
+      float dy = (bodies[j].y - bodies[i].y);
+      float distance = fastSqrt(distanceSq);
 
-      // 万有引力公式 - 使用软化处理避免过强引力
-      float force = G * bodies[i].mass * bodies[j].mass / (distanceSq + 50.0f);
+      dx /= distance;
+      dy /= distance;
+
+      // 万有引力公式（软化处理）
+      float force = G * bodies[i].mass * bodies[j].mass / (distanceSq + 40.0f);
       fx += force * dx;
       fy += force * dy;
     }
@@ -430,21 +514,21 @@ void loop() {
     bodies[i].vx += fx / bodies[i].mass * dt;
     bodies[i].vy += fy / bodies[i].mass * dt;
 
-    // 限制最大速度避免运动过快
-    float speed = sqrt(bodies[i].vx * bodies[i].vx + bodies[i].vy * bodies[i].vy);
-    float maxSpeed = 2.5f;
+    // 速度限制
+    float speed = fastSqrt(bodies[i].vx * bodies[i].vx + bodies[i].vy * bodies[i].vy);
+    float maxSpeed = 3.0f;
     if (speed > maxSpeed) {
-      bodies[i].vx = bodies[i].vx * maxSpeed / speed;
-      bodies[i].vy = bodies[i].vy * maxSpeed / speed;
+      bodies[i].vx *= maxSpeed / speed;
+      bodies[i].vy *= maxSpeed / speed;
     }
   }
 
-  // 2. 更新位置并处理边界碰撞
+  // 4. 更新位置和边界检测
   for (int i = 0; i < NUM_BODIES; i++) {
     bodies[i].x += bodies[i].vx * dt;
     bodies[i].y += bodies[i].vy * dt;
 
-    // 边界碰撞检测（考虑球体半径）
+    // 边界处理
     int leftBound = bodies[i].radius;
     int rightBound = 96 - bodies[i].radius;
     int topBound = bodies[i].radius;
@@ -472,22 +556,34 @@ void loop() {
     updateTrail(i);
   }
 
-  // 3. 绘制轨迹（先绘制轨迹，确保在球体下方）
+  // 5. 绘制轨迹
   for (int i = 0; i < NUM_BODIES; i++) {
     drawTrail(i);
   }
 
-  // 4. 绘制球体
+  // 6. 绘制球体
   for (int i = 0; i < NUM_BODIES; i++) {
-    drawGradientBall(bodies[i].x, bodies[i].y, bodies[i].radius, bodies[i].color);
+    drawBall(bodies[i].x, bodies[i].y, bodies[i].radius, bodies[i].color);
   }
 
+  // 7. 刷新显示
   display.display();
 
-  // 动态调整延迟以保持稳定帧率
-  unsigned long frameTime = micros() - startTime;
-  unsigned long targetFrameTime = 40000; // ~25 FPS
-  if (frameTime < targetFrameTime) {
-    delayMicroseconds(targetFrameTime - frameTime);
+  // 8. 帧率控制
+  unsigned long frameTime = micros() - frameStart;
+  unsigned long sleepTime = (frameTime < TARGET_FRAME_TIME) ?
+    (TARGET_FRAME_TIME - frameTime) : 0;
+
+  delayMicroseconds(sleepTime);
+
+  // 性能监控
+#ifdef DEBUG_PERF
+  frameCount++;
+  if (millis() - lastFPSUpdate >= 1000) {
+    currentFPS = frameCount * 1000.0 / (millis() - lastFPSUpdate);
+    Serial.printf("FPS: %.1f, FrameTime: %luμs\n", currentFPS, frameTime);
+    frameCount = 0;
+    lastFPSUpdate = millis();
   }
+#endif
 }
