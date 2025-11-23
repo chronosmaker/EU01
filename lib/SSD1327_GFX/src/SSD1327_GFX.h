@@ -48,7 +48,7 @@ public:
   void setContrast(uint8_t level);
   void setColumnAddress(uint8_t start = 8, uint8_t end = 55);
   void setRowAddress(uint8_t start = 0, uint8_t end = 95);
-  void setGrayLevels(void);
+  void setGrayLevels(uint8_t levels);
 
 private:
   SPIClass* _spi;

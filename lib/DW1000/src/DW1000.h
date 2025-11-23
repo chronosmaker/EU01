@@ -90,15 +90,15 @@ public:
 	*/
 	static void setGPIOMode(uint8_t msgp, uint8_t mode);
 
-	/**
-	Enable deep sleep mode
-	*/
-	static void deepSleep();
+        /**
+        Enable deep sleep mode
+        */
+        static void deepSleep();
 
-	/**
-	Wake-up from deep sleep by toggle chip select pin
-	*/
-	static void spiWakeup();
+        /**
+        Wake-up from deep sleep by toggle chip select pin
+        */
+        static void spiWakeup();
 
 	/**
 	Resets all connected or the currently selected DW1000 chip. A hard reset of all chips
@@ -168,6 +168,7 @@ public:
 	static void setDeviceAddress(uint16_t val);
 	// TODO MAC and filters
 	
+	static void setEUI(char eui[]);
 	static void setEUI(byte eui[]);
 	
 	/* ##### General device configuration ######################################## */
@@ -311,10 +312,6 @@ public:
 	// transmission state
 	static void newTransmit();
 	static void startTransmit();
-
-	// Vincent changes
-	// For large power moudle
-	static void high_power_init();
 	
 	/* ##### Operation mode selection ############################################ */
 	/** 
@@ -349,8 +346,7 @@ public:
 	
 	//convert from char to 4 bits (hexadecimal)
 	static uint8_t nibbleFromChar(char c);
-	static void convertToByte(const char string[], byte* eui_byte, uint8_t size = LEN_EUI);
-	static void convertToByte(uint16_t val, byte *bytes);
+	static void convertToByte(char string[], byte* eui_byte);
 	
 	// host-initiated reading of temperature and battery voltage
 	static void getTempAndVbat(float& temp, float& vbat);

@@ -17,74 +17,94 @@
  * @file DW1000Device.h
  * Arduino global library (header file) working with the DW1000 library
  * for the Decawave DW1000 UWB transceiver IC.
- *
+ * 
+ * @todo complete this class
  */
 
-#define INACTIVITY_TIME 2000
+#define INACTIVITY_TIME 1000
 
 #ifndef _DW1000Device_H_INCLUDED
 #define _DW1000Device_H_INCLUDED
 
 #include "DW1000Time.h"
+#include "DW1000Mac.h"
 
-class DW1000Device
-{
+class DW1000Mac;
+
+class DW1000Device;
+
+class DW1000Device {
 public:
-	// Constructor and destructor
+	//Constructor and destructor
 	DW1000Device();
-	DW1000Device(byte shortAddress[]);
+	DW1000Device(byte address[], byte shortAddress[]);
+	DW1000Device(byte address[], boolean shortOne = false);
 	~DW1000Device();
-
-	// Setters
+	
+	//setters:
+	void setReplyTime(uint16_t replyDelayTimeUs);
+	void setAddress(char address[]);
+	void setAddress(byte* address);
 	void setShortAddress(byte address[]);
-	void setIndex(uint8_t index) { _index = index; }
-	void setRange(float range) { _range = range; }
-	void setRXPower(float power) { _RXPower = power; }
-	void setFPPower(float power) { _FPPower = power; }
-	void setQuality(float quality) { _quality = quality; }
-	void setReplyTime(uint16_t replyDelayTimeUs) { _replyDelayTimeUs = replyDelayTimeUs; }
-
-	// Getters
-	uint8_t getIndex() { return _index; }
-	byte *getByteShortAddress() { return _shortAddress; }
+	
+	void setRange(float range);
+	void setRXPower(float power);
+	void setFPPower(float power);
+	void setQuality(float quality);
+	
+	void setReplyDelayTime(uint16_t time) { _replyDelayTimeUS = time; }
+	
+	void setIndex(int8_t index) { _index = index; }
+	
+	//getters
+	uint16_t getReplyTime() { return _replyDelayTimeUS; }
+	
+	byte* getByteAddress();
+	
+	int8_t getIndex() { return _index; }
+	
+	//String getAddress();
+	byte* getByteShortAddress();
 	uint16_t getShortAddress();
-	uint16_t getReplyTime() { return _replyDelayTimeUs; }
-
-	float getRange() { return _range; }
-	float getRXPower() { return _RXPower; }
-	float getFPPower() { return _FPPower; }
-	float getQuality() { return _quality; }
-
-	boolean isAddressEqual(DW1000Device *device);
-	boolean isShortAddressEqual(DW1000Device *device);
-
-	// functions which contains the date: (easier to put as public)
-	//  timestamps to remember
+	//String getShortAddress();
+	
+	float getRange();
+	float getRXPower();
+	float getFPPower();
+	float getQuality();
+	
+	boolean isAddressEqual(DW1000Device* device);
+	boolean isShortAddressEqual(DW1000Device* device);
+	
+	//functions which contains the date: (easier to put as public)
+	// timestamps to remember
 	DW1000Time timePollSent;
 	DW1000Time timePollReceived;
 	DW1000Time timePollAckSent;
 	DW1000Time timePollAckReceived;
 	DW1000Time timeRangeSent;
 	DW1000Time timeRangeReceived;
-
-	bool hasSentPoolAck;
-
-	DW1000Time timePollAckReceivedMinusPollSent;
-	DW1000Time timeRangeSentMinusPollAckReceived;
-
-	void noteActivity();
+	
+	void    noteActivity();
 	boolean isInactive();
 
-private:
-	byte _shortAddress[2];
-	unsigned long _activity;
-	uint16_t _replyDelayTimeUs;
-	uint8_t _index;
 
-	float _range;
-	float _RXPower;
-	float _FPPower;
-	float _quality;
+private:
+	//device ID
+	byte         _ownAddress[8];
+	byte         _shortAddress[2];
+	int32_t      _activity;
+	uint16_t     _replyDelayTimeUS;
+	int8_t       _index; // not used
+	
+	int16_t _range;
+	int16_t _RXPower;
+	int16_t _FPPower;
+	int16_t _quality;
+	
+	void randomShortAddress();
+	
 };
+
 
 #endif

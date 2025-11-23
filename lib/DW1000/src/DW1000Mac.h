@@ -30,7 +30,6 @@
 #define PAN_ID_1 0xCA
 #define PAN_ID_2 0xDE
 
-#define BLINK_MAC_LEN 4
 #define SHORT_MAC_LEN 9
 #define LONG_MAC_LEN 15
 
@@ -46,12 +45,21 @@ class DW1000Device;
 class DW1000Mac {
 public:
 	//Constructor and destructor
+	DW1000Mac(DW1000Device* parent);
 	DW1000Mac();
-	~DW1000Mac();	
+	~DW1000Mac();
+	
+	
+	//setters
+	void setDestinationAddress(byte* destinationAddress);
+	void setDestinationAddressShort(byte* shortDestinationAddress);
+	void setSourceAddress(byte* sourceAddress);
+	void setSourceAddressShort(byte* shortSourceAddress);
+	
 	
 	//for poll message we use just 2 bytes address
 	//total=12 bytes
-	void generateBlinkFrame(byte frame[], byte sourceShortAddress[]);
+	void generateBlinkFrame(byte frame[], byte sourceAddress[], byte sourceShortAddress[]);
 	
 	//the short fram usually for Resp, Final, or Report
 	//2 bytes for Desination Address and 2 bytes for Source Address
@@ -64,16 +72,16 @@ public:
 	void generateLongMACFrame(byte frame[], byte sourceShortAddress[], byte destinationAddress[]);
 	
 	//in order to decode the frame and save source Address!
-	static void decodeBlinkFrame(byte frame[], byte shortAddress[]);
-	static void decodeShortMACFrame(byte frame[], byte address[]);
-	static void decodeLongMACFrame(byte frame[], byte address[]);
+	void decodeBlinkFrame(byte frame[], byte address[], byte shortAddress[]);
+	void decodeShortMACFrame(byte frame[], byte address[]);
+	void decodeLongMACFrame(byte frame[], byte address[]);
 	
+	void incrementSeqNumber();
 
 
 private:
 	uint8_t _seqNumber = 0;
-	inline void reverseArray(byte to[], byte from[], int16_t size);
-	inline void incrementSeqNumber();
+	void reverseArray(byte to[], byte from[], int16_t size);
 	
 };
 

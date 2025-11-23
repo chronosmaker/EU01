@@ -94,7 +94,7 @@ void SSD1327_GFX::initDisplay(void) {
   setContrast(0x80);
 
   // 设置16级灰度表
-  setGrayLevels();
+  setGrayLevels(SSD1327_GRAY_LEVELS);
 
   writeCommand(SSD1327_NORMALDISPLAY); // 正常显示模式
   writeCommand(SSD1327_DISPLAYON);     // 显示开启
@@ -138,10 +138,10 @@ void SSD1327_GFX::setRowAddress(uint8_t start, uint8_t end) {
 }
 
 // 设置16级灰度表（线性）
-void SSD1327_GFX::setGrayLevels(void) {
+void SSD1327_GFX::setGrayLevels(uint8_t levels) {
   writeCommand(SSD1327_SETGRAYTABLE);
   // 线性灰度表
-  for (uint8_t i = 0; i < 16; i++) {
+  for (uint8_t i = 0; i < levels; i++) {
     writeCommand(i * 2);
   }
 }
