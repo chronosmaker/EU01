@@ -37,11 +37,8 @@
 #include "deprecated.h"
 #include "require_cpp11.h"
 
-#if DW1000TIME_H_PRINTABLE
-class DW1000Time : public Printable {
-#else
+
 class DW1000Time {
-#endif // DW1000Time_H_PRINTABLE
 public:
 	// Time resolution in micro-seconds of time based registers/values.
 	// Each bit in a timestamp counts for a period of approx. 15.65ps
@@ -126,14 +123,6 @@ public:
 	// compare
 	boolean operator==(const DW1000Time& cmp) const;
 	boolean operator!=(const DW1000Time& cmp) const;
-
-#ifdef DW1000TIME_H_PRINTABLE
-	// print to serial for debug
-	DEPRECATED_MSG("use Serial.print(object)")
-	void print();
-	// for usage with e.g. Serial.print()
-	size_t printTo(Print& p) const;
-#endif // DW1000Time_H_PRINTABLE
 	
 private:
 	// timestamp size from dw1000 is 40bit, maximum number 1099511627775

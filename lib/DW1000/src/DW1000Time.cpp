@@ -105,7 +105,7 @@ void DW1000Time::setTimestamp(const DW1000Time& copy) {
 }
 
 /**
- * Initiates DW100Time with micro seconds
+ * Initiates DW1000Time with micro seconds
  * @param timeUs time in micro seconds
  * @todo maybe replace by better function without float
  */
@@ -278,46 +278,3 @@ boolean DW1000Time::operator!=(const DW1000Time& cmp) const {
 	//return !(*this == cmp); // seems not as intended
 	return _timestamp != cmp.getTimestamp();
 }
-
-#ifdef DW1000TIME_H_PRINTABLE
-/**
- * For debuging, print timestamp pretty as integer with arduinos serial
- * @deprecated use Serial.print(object)
- */
-void DW1000Time::print() {
-	Serial.print(*this);
-	Serial.println();
-}
-
-/**
- * Print timestamp of instance as integer with e.g. Serial.print()
- * @param p printer instance
- * @return size of printed chars
- */
-size_t DW1000Time::printTo(Print& p) const {
-	int64_t       number  = _timestamp;
-	unsigned char buf[21];
-	uint8_t       i       = 0;
-	uint8_t       printed = 0;
-	// printf for arduino avr do not support int64, so we have to calculate
-	if(number == 0) {
-		p.print((char)'0');
-		return 1;
-	}
-	if(number < 0) {
-		p.print((char)'-');
-		number = -number; // make positive
-		printed++;
-	}
-	while(number > 0) {
-		int64_t q = number/10;
-		buf[i++] = number-q*10;
-		number = q;
-	}
-	printed += i;
-	for(; i > 0; i--)
-		p.print((char)(buf[i-1] < 10 ? '0'+buf[i-1] : 'A'+buf[i-1]-10));
-	
-	return printed;
-}
-#endif // DW1000Time_H_PRINTABLE
